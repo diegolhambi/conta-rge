@@ -15,3 +15,10 @@
 
 # PHP Composer dependencies:
 /vendor/
+
+# Environment example:
+.env.example
+
+
+# Log files:
+*.log
