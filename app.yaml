@@ -1,1 +1,2 @@
 runtime: php72
+entrypoint: serve src/index.php
