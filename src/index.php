@@ -2,7 +2,7 @@
 include __DIR__."/../vendor/autoload.php";
 
 use Symfony\Component\Dotenv\Dotenv;
-use PHPMailer\PHPMailer\PHPMailer;
+use Mailgun\Mailgun;
 use GuzzleHttp\Client;
 
 if (file_exists(__DIR__."/../.env")) {
@@ -57,54 +57,45 @@ $response = $client->post("historico-contas/validar-situacao", [
 
 $openBills = json_decode($response->getBody(), true);
 
-$pdfBillQuery = [];
-$billReferenceMonth = [];
 foreach ($openBills["ContasAberto"] as $bill) {
-    $billReferenceMonth[] = $bill["MesReferencia"];
-
-    $pdfBillQuery[] = [
-        "numeroContaEnergia" => $bill["NumeroContaEnergia"],
-        "codigoClasse"       => $sessionInfo["Instalacao"]["CodClasse"],
-        "codEmpresaSAP"      => $sessionInfo["Instalacao"]["CodEmpresaSAP"],
-        "instalacao"         => $sessionInfo["Instalacao"]["Instalacao"],
-        "parceiroNegocio"    => $sessionInfo["Instalacao"]["ParceiroNegocio"],
-        "token"              => $sessionInfo["access_token"],
-        "contaAcumulada"     => ($bill["ContaAcumulada"]) ? "true" : "false",
-    ];
-}
-
-foreach ($pdfBillQuery as $index => $query) {
     $fatura = tmpfile();
+
     $response = $client->get("historico-contas/conta-completa", [
-        "query" => $query,
+        "query" => [
+            "numeroContaEnergia" => $bill["NumeroContaEnergia"],
+            "codigoClasse"       => $sessionInfo["Instalacao"]["CodClasse"],
+            "codEmpresaSAP"      => $sessionInfo["Instalacao"]["CodEmpresaSAP"],
+            "instalacao"         => $sessionInfo["Instalacao"]["Instalacao"],
+            "parceiroNegocio"    => $sessionInfo["Instalacao"]["ParceiroNegocio"],
+            "token"              => $sessionInfo["access_token"],
+            "contaAcumulada"     => ($bill["ContaAcumulada"]) ? "true" : "false",
+        ],
         "sink"  => $fatura
     ]);
 
     $faturaUri = stream_get_meta_data($fatura)["uri"];
-    try {
-        $message = new PHPMailer(true);
 
-        //$message->SMTPDebug = 3;
-        $message->CharSet    = "UTF-8";
-        $message->isSMTP();
-        $message->Host       = $_SERVER["SMTP_HOST"];
-        $message->Port       = $_SERVER["SMTP_PORT"];
-        $message->SMTPSecure = "tls";
-        $message->SMTPAuth   = true;
-        $message->Username   = $_SERVER["SMTP_USER"];
-        $message->Password   = $_SERVER["SMTP_PASSWORD"];
+    $mg = Mailgun::create($_SERVER["MAILGUN_KEY"]);
 
-        $message->setFrom($_SERVER["SMTP_FROM"]);
-        $message->addAddress($_SERVER["RECIPIENT"]);
+    $invoiceDue = DateTime::createFromFormat("Y-m-d\TH:i:s", $bill["Vencimento"]);
+    $referenceMonth = DateTime::createFromFormat("Y/m", $bill["MesReferencia"]);
 
-        $message->Subject = "RGE Mês Ref. {$billReferenceMonth[$index]} - Conta de Luz";
-        $message->Body = "Hello, world!";
-        $message->addAttachment($faturaUri, "fatura-{$query["numeroContaEnergia"]}.pdf");
+    $mailHtml = "Valor: <b>R$ {$bill["Valor"]}</b><br>
+                 Vencimento: <b>{$invoiceDue->format("d/m/Y")}</b> <br>
+                 Mês de Referência: <b>{$referenceMonth->format("m/Y")}</b><br>
+                 Protocolo: <b>{$openBills["Protocolo"]}</b>";
 
-        echo ($message->send()) ? "true" : "false";
-    } catch (\Exception $e) {
-        echo $e->message;
-    }
+    $result = $mg->messages()->send($_SERVER["MAILGUN_DOMAIN"], array(
+        "from" => "Seu Barriga <mailgun@{$_SERVER["MAILGUN_DOMAIN"]}>",
+        "to"   => $_SERVER["RECIPIENT"],
+        "subject" => "RGE Mês Ref. {$referenceMonth->format("m/Y")} - Conta de Energia Elétrica",
+        "html" => $mailHtml,
+        "attachment" => [
+                ["filePath" => $faturaUri, "filename" => "fatura-{$bill["NumeroContaEnergia"]}.pdf"]
+            ]
+        ));
+
+    echo $result->getMessage();
 
     fclose($fatura);
 
