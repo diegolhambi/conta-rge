@@ -1,5 +1,5 @@
 cron:
 - description: "monthly send open bill"
   url: /
-  schedule: "20 of month 07:00"
+  schedule: "23 of month 07:00"
   timezone: America/Sao_Paulo
